@@ -268,7 +268,7 @@ function App() {
   };
 
   const displayName = user?.name || "Demo operator";
-  const oauthError = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("oauthError") === "invalid_state";
+  const oauthError = typeof window !== "undefined" && ["invalid_state", "callback_failed"].includes(new URLSearchParams(window.location.search).get("oauthError") || "");
   const handlePrimaryEntry = () => {
     if (isAuthenticated) {
       setShowWelcome(false);

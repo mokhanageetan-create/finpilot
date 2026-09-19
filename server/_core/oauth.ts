@@ -60,8 +60,11 @@ export function registerOAuthRoutes(app: Express) {
 
       res.redirect(302, "/");
     } catch (error) {
-      console.error("[OAuth] Callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[OAuth] Callback failed", detail);
+      // Authorization codes are one-time values and may expire while the user
+      // is switching tabs. Return to the app so a fresh login can be started.
+      res.redirect(302, "/?oauthError=callback_failed");
     }
   });
 }
