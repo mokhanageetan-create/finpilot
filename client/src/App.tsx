@@ -268,6 +268,7 @@ function App() {
   };
 
   const displayName = user?.name || "Demo operator";
+  const oauthError = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("oauthError") === "invalid_state";
   const handlePrimaryEntry = () => {
     if (isAuthenticated) {
       setShowWelcome(false);
@@ -282,7 +283,7 @@ function App() {
   };
 
   if (showWelcome) {
-    return <WelcomeScreen onEnter={handlePrimaryEntry} onDemo={() => setShowWelcome(false)} isAuthenticated={isAuthenticated} authLoading={loading} userName={user?.name ?? null} />;
+    return <WelcomeScreen onEnter={handlePrimaryEntry} onDemo={() => setShowWelcome(false)} isAuthenticated={isAuthenticated} authLoading={loading} userName={user?.name ?? null} oauthError={oauthError} />;
   }
 
   // make sure to consider if you need authentication for certain routes
@@ -346,8 +347,8 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "FP";
 }
 
-function WelcomeScreen({ onEnter, onDemo, isAuthenticated, authLoading, userName }: { onEnter: () => void; onDemo: () => void; isAuthenticated: boolean; authLoading: boolean; userName: string | null }) {
-  return <div className="welcome-shell"><div className="welcome-grid" /><div className="welcome-screw screw-a" /><div className="welcome-screw screw-b" /><div className="welcome-content"><div className="welcome-top"><div className="brand-mark large"><span>FP</span><i /></div><span className="micro-label">PERSONAL FINANCE DECISION SUPPORT</span><div className="status-chip"><span className={`led ${isAuthenticated ? "led-green" : "led-orange"}`} /> {isAuthenticated ? `MANUS CONNECTED · ${userName || "ACCOUNT"}` : "DEMO MODE / SIGN-IN READY"}</div></div><div className="welcome-layout"><div className="welcome-copy"><div className="eyebrow"><span className="led led-orange" /> FINPILOT / CONTROL CONSOLE</div><h1>Your Money.<br /><em>One Clear View.</em></h1><p>Understand where your money goes, what is coming next, and how today's spending affects your goals.</p><div className="welcome-actions"><button className="mechanical-button primary-button" onClick={onEnter} disabled={authLoading}>{authLoading ? "CHECKING SESSION..." : isAuthenticated ? "OPEN FINPILOT" : "SIGN IN WITH MANUS"} {!authLoading && <ArrowUpRight size={17} />}</button><button className="mechanical-button secondary-button" onClick={onDemo}>VIEW DEMO DATA <ChevronRight size={16} /></button></div><div className="welcome-trust"><ShieldCheck size={15} /><span>{isAuthenticated ? "Signed in securely with Manus OAuth." : "Use Manus OAuth to save your workspace identity."}</span></div></div><ControlConsole /></div><div className="welcome-meta"><span>INDIA / INR</span><span>{isAuthenticated ? "OAUTH SESSION ACTIVE" : "LOCAL DEMO MODE"}</span><span>BUILD 2026.09</span></div></div></div>;
+function WelcomeScreen({ onEnter, onDemo, isAuthenticated, authLoading, userName, oauthError }: { onEnter: () => void; onDemo: () => void; isAuthenticated: boolean; authLoading: boolean; userName: string | null; oauthError: boolean }) {
+  return <div className="welcome-shell"><div className="welcome-grid" /><div className="welcome-screw screw-a" /><div className="welcome-screw screw-b" /><div className="welcome-content"><div className="welcome-top"><div className="brand-mark large"><span>FP</span><i /></div><span className="micro-label">PERSONAL FINANCE DECISION SUPPORT</span><div className="status-chip"><span className={`led ${isAuthenticated ? "led-green" : "led-orange"}`} /> {isAuthenticated ? `MANUS CONNECTED · ${userName || "ACCOUNT"}` : "DEMO MODE / SIGN-IN READY"}</div></div><div className="welcome-layout"><div className="welcome-copy"><div className="eyebrow"><span className="led led-orange" /> FINPILOT / CONTROL CONSOLE</div><h1>Your Money.<br /><em>One Clear View.</em></h1><p>Understand where your money goes, what is coming next, and how today's spending affects your goals.</p>{oauthError && <div className="oauth-retry-notice"><AlertTriangle size={15} /><span>Your sign-in session expired or was blocked by the browser. Please try Manus sign-in again.</span></div>}<div className="welcome-actions"><button className="mechanical-button primary-button" onClick={onEnter} disabled={authLoading}>{authLoading ? "CHECKING SESSION..." : isAuthenticated ? "OPEN FINPILOT" : "SIGN IN WITH MANUS"} {!authLoading && <ArrowUpRight size={17} />}</button><button className="mechanical-button secondary-button" onClick={onDemo}>VIEW DEMO DATA <ChevronRight size={16} /></button></div><div className="welcome-trust"><ShieldCheck size={15} /><span>{isAuthenticated ? "Signed in securely with Manus OAuth." : "Use Manus OAuth to save your workspace identity."}</span></div></div><ControlConsole /></div><div className="welcome-meta"><span>INDIA / INR</span><span>{isAuthenticated ? "OAUTH SESSION ACTIVE" : "LOCAL DEMO MODE"}</span><span>BUILD 2026.09</span></div></div></div>;
 }
 
 function ControlConsole() {

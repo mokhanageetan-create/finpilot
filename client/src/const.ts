@@ -18,7 +18,10 @@ export const startLogin = () => {
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
 
   const nonce = crypto.randomUUID();
-  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=None; Secure`;
+  // OAuth must complete as a top-level navigation. Lax cookies are sent on the
+  // provider's top-level GET callback while avoiding blocked third-party-cookie
+  // behavior in embedded preview frames.
+  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
   const state = encodeOAuthState({ redirectUri, nonce });
 
   const url = new URL(`${oauthPortalUrl}/app-auth`);
@@ -27,5 +30,6 @@ export const startLogin = () => {
   url.searchParams.set("state", state);
   url.searchParams.set("type", "signIn");
 
-  window.location.href = url.toString();
+  const targetWindow = window.top && window.top !== window.self ? window.top : window;
+  targetWindow.location.href = url.toString();
 };
