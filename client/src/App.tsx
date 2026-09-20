@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ChangeEvent, CSSProperties, FormEvent, ReactNode } from "react";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "./const";
 import {
@@ -171,6 +172,7 @@ function categorize(description: string) {
 
 async function extractPdfText(file: File) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const buffer = await file.arrayBuffer();
   const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
   const pages: string[] = [];
