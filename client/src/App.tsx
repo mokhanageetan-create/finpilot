@@ -255,7 +255,7 @@ function App() {
     setAssistantMessages((messages) => [...messages, { from: "user", text: trimmed }]);
     setQuery("");
     window.setTimeout(() => {
-      setAssistantMessages((messages) => [...messages, { from: "assistant", text: answerQuestion(trimmed, { expenses, balance, categoryTotals, budgetCommitted, budgetLimit, subscriptions, goals }), meta: "LIVE DATA RESPONSE" }]);
+      setAssistantMessages((messages) => [...messages, { from: "assistant", text: answerQuestion(trimmed, { expenses, balance, categoryTotals, budgetCommitted, budgetLimit, subscriptions, goals, transactionCount: transactions.length }), meta: "PERSONALIZED RESPONSE" }]);
     }, 360);
   };
 
@@ -465,15 +465,35 @@ function SettingToggle({ label, description, checked, onChange }: { label: strin
 }
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) { return <div className="empty-state">{icon}<strong>{title}</strong><span>{copy}</span></div>; }
 
-function answerQuestion(question: string, context: { expenses: number; balance: number; categoryTotals: { name: string; value: number }[]; budgetCommitted: number; budgetLimit: number; subscriptions: typeof subscriptions; goals: Goal[] }) {
-  const normalized = question.toLowerCase();
+function answerQuestion(question: string, context: { expenses: number; balance: number; categoryTotals: { name: string; value: number }[]; budgetCommitted: number; budgetLimit: number; subscriptions: typeof subscriptions; goals: Goal[]; transactionCount: number }) {
+  const normalized = question.toLowerCase().replace(/[!?.,]/g, "").trim();
   const top = [...context.categoryTotals].sort((a, b) => b.value - a.value)[0];
-  if (normalized.includes("most") || normalized.includes("largest") || normalized.includes("food")) return `Your highest spending category this month is ${top?.name || "Food"} at ${money(top?.value || 0)}, representing approximately ${Math.round(((top?.value || 0) / context.expenses) * 100)}% of total expenses. Food and housing are the next areas to review if you want to understand the month in more detail.`;
-  if (normalized.includes("subscription") || normalized.includes("recurring")) return `I found ${context.subscriptions.length} recurring services. Your estimated monthly commitment is ${money(context.subscriptions.slice(0, 3).reduce((sum, item) => sum + item.amount, 0) + 125)}. The next payment is Netflix at ₹649 on 24 Sep, followed by Spotify at ₹119 on 28 Sep.`;
-  if (normalized.includes("increase") || normalized.includes("compare") || normalized.includes("august")) return `September expenses are ${money(context.expenses)} versus ₹38,769 in August, a difference of ₹4,511. The clearest movement is Shopping, currently 68% above its typical monthly average, with Food also trending higher.`;
-  if (normalized.includes("budget") || normalized.includes("committed")) return `${money(context.budgetCommitted)} of your ${money(context.budgetLimit)} active monthly budget is committed — ${Math.round((context.budgetCommitted / context.budgetLimit) * 100)}%. Entertainment is over its envelope, while Food and Transport remain within their planned ranges.`;
-  if (normalized.includes("save") || normalized.includes("emergency") || normalized.includes("goal")) return `Your current monthly capacity after September expenses is ${money(context.balance)}. The Emergency Fund is at ₹42,500 of ₹1,00,000. Reducing discretionary spend by ₹2,000 per month could move the estimated completion approximately 2 months earlier.`;
-  return `I can help you explore spending, recurring payments, budgets, and goal impact. Try asking about your largest expenses, September versus August, or what is committed this month.`;
+  const isGreeting = /^(hi|hello|hey|good|good morning|good evening|how are you|how it helps|how does this help)$/.test(normalized);
+  if (isGreeting) return `I can work with your connected FinPilot data. I can find your biggest spending area, summarize recurring payments, check budget usage, or explain how spending affects your goals. What would you like to understand first?`;
+  if (!context.transactionCount) {
+    if (normalized.includes("help") || normalized.includes("what can") || normalized.includes("how")) return "I can help once your data is available. Upload a bank-statement PDF from Transactions, then ask me to find spending patterns, recurring payments, budget pressure, or goal progress.";
+    return "I don’t have transaction data to analyze yet, so I don’t want to invent an answer. Upload a bank-statement PDF from Transactions, or tell me whether you want help with spending, subscriptions, budgets, or goals.";
+  }
+  if (normalized.includes("most") || normalized.includes("largest") || normalized.includes("spend")) {
+    if (!top) return "I don’t have categorized expenses for this period yet. Import a bank-statement PDF and I’ll identify the largest spending areas.";
+    const share = context.expenses ? Math.round((top.value / context.expenses) * 100) : 0;
+    return `Your largest spending category is ${top.name} at ${money(top.value)}, about ${share}% of the ${money(context.expenses)} total. I can also break that category down by transaction if you want.`;
+  }
+  if (normalized.includes("subscription") || normalized.includes("recurring")) {
+    if (!context.subscriptions.length) return "I haven’t detected recurring payments yet. I can check for repeated merchants and amounts after you import a longer statement history.";
+    const commitment = context.subscriptions.reduce((sum, item) => sum + item.amount, 0);
+    return `I found ${context.subscriptions.length} recurring payment${context.subscriptions.length === 1 ? "" : "s"}, totaling about ${money(commitment)} across the records currently loaded. Ask me to list them if you want the merchant-by-merchant view.`;
+  }
+  if (normalized.includes("increase") || normalized.includes("compare") || normalized.includes("august") || normalized.includes("last month")) return "I can compare months when the imported statement history includes both periods. At the moment, I only have the currently loaded transactions, so I won’t estimate a month-over-month change.";
+  if (normalized.includes("budget") || normalized.includes("committed")) {
+    if (!context.budgetLimit) return "You don’t have an active budget yet. Open Budgets to create an envelope, then I can track committed spend and remaining room for you.";
+    return `${money(context.budgetCommitted)} of your ${money(context.budgetLimit)} active budget is committed, or ${Math.round((context.budgetCommitted / context.budgetLimit) * 100)}%. I can help you decide which category to review next.`;
+  }
+  if (normalized.includes("save") || normalized.includes("emergency") || normalized.includes("goal")) {
+    if (!context.goals.length) return "You don’t have a financial goal configured yet. Open Goals to add one, and I can relate your current cash flow to its progress.";
+    return `Your current period cash flow is ${money(context.balance)} across the loaded transactions. I can compare that with a specific goal if you tell me which goal you want to review.`;
+  }
+  return `I’m not sure which part of your finances you mean by “${question}”. Do you want help with spending, recurring payments, budgets, or goals?`;
 }
 
 export default App;
