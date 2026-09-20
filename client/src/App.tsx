@@ -330,7 +330,7 @@ function App() {
           <div className="nav-group-label">COMMAND DECK</div>
           {navItems.map((item) => {
             const Icon = item.icon;
-            return <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => navigate(item.id)}><Icon size={17} strokeWidth={1.8} /><span>{item.label}</span>{item.note && <em>{item.note}</em>}{page === item.id && <ChevronRight size={15} className="nav-chevron" />}</button>;
+            return <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} onClick={() => navigate(item.id)}><Icon size={17} strokeWidth={1.8} style={{ display: "grid" }} /><span>{item.label}</span>{item.note && <em>{item.note}</em>}{page === item.id && <ChevronRight size={15} className="nav-chevron" />}</button>;
           })}
         </nav>
         <div className="sidebar-bottom">
