@@ -169,6 +169,37 @@ function categorize(description: string) {
   return "Other";
 }
 
+async function extractPdfText(file: File) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const buffer = await file.arrayBuffer();
+  const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+  }
+  return pages.join("\n");
+}
+
+function parsePdfTransactions(raw: string): Transaction[] {
+  const datePattern = /(\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})|\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/;
+  return raw.split(/\r?\n|(?=\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s)/).map((line, index) => {
+    const normalized = line.replace(/\s+/g, " ").trim();
+    const dateMatch = normalized.match(datePattern);
+    const amountMatches = Array.from(normalized.matchAll(/(?:₹|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi));
+    const amountToken = amountMatches.at(-1)?.[1] || "";
+    const amount = Math.abs(Number(amountToken.replace(/,/g, "")) || 0);
+    if (!dateMatch || !amount || amount < 0.01) return null;
+    const description = normalized.slice((dateMatch.index || 0) + dateMatch[0].length).replace(amountToken, "").replace(/\b(?:CR|DR|CREDIT|DEBIT)\b/gi, "").trim() || "Imported PDF transaction";
+    const type: TransactionType = /\b(?:CR|CREDIT|SALARY|DEPOSIT|REFUND)\b/i.test(normalized) ? "income" : "expense";
+    const rawDate = dateMatch[0].replace(/-/g, "/");
+    const parts = rawDate.split(/[\/\s]+/);
+    const date = parts.length === 3 && parts[1].length <= 2 ? `${parts[2].length === 2 ? `20${parts[2]}` : parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}` : "2026-09-19";
+    return { id: `PDF-${Date.now()}-${index}`, date, description, category: categorize(description), amount, type, status: "Completed" } as Transaction;
+  }).filter((item): item is Transaction => Boolean(item));
+}
+
 const navItems: { id: Page; label: string; icon: typeof LayoutDashboard; note?: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
@@ -226,32 +257,30 @@ function App() {
     }, 360);
   };
 
-  const handleCSV = (event: ChangeEvent<HTMLInputElement>) => {
+  const handlePDF = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setImportState("processing");
     setImportStats({ processed: 0, categories: 0, recurring: 0, anomalies: 0 });
-    const reader = new FileReader();
-    reader.onload = () => {
-      const raw = String(reader.result || "");
-      const lines = raw.split(/\r?\n/).filter(Boolean);
-      const headers = (lines.shift() || "").split(",").map((header) => header.trim().toLowerCase());
-      const parsed: Transaction[] = lines.map((line, index) => {
-        const values = line.split(",").map((value) => value.trim().replace(/^"|"$/g, ""));
-        const get = (name: string) => values[headers.indexOf(name)] || "";
-        const description = get("description") || get("merchant") || "Imported transaction";
-        const amount = Math.abs(Number(get("amount").replace(/[^0-9.-]/g, "")) || 0);
-        const type = (get("type").toLowerCase().includes("income") || Number(get("amount")) > 0 && get("type") === "credit") ? "income" : "expense";
-        return { id: `IMP-${Date.now()}-${index}`, date: get("date") || "2026-09-19", description, category: get("category") || categorize(description), amount, type: type as TransactionType, status: "Completed" as const };
-      }).filter((item) => item.amount > 0);
+    try {
+      const raw = await extractPdfText(file);
+      const parsed = parsePdfTransactions(raw);
+      if (!parsed.length) {
+        setImportState("idle");
+        notify("No transaction rows found. Please upload a text-based bank statement PDF.");
+        return;
+      }
       window.setTimeout(() => {
         setTransactions((items) => [...parsed, ...items]);
         setImportStats({ processed: parsed.length, categories: new Set(parsed.map((item) => item.category)).size, recurring: parsed.filter((item) => item.category === "Subscriptions" || item.description.toLowerCase().includes("rent")).length, anomalies: parsed.filter((item) => item.amount > 5000).length });
         setImportState("complete");
-        notify(`${parsed.length || 0} transactions added to your profile`);
-      }, 1250);
-    };
-    reader.readAsText(file);
+        notify(`${parsed.length} transactions extracted from your PDF`);
+      }, 700);
+    } catch (error) {
+      console.error("[PDF import] Failed to extract statement", error);
+      setImportState("idle");
+      notify("PDF could not be read. Try a text-based statement PDF instead of a scanned image.");
+    }
   };
 
   const handlePageSearch = (event: FormEvent) => {
@@ -319,7 +348,7 @@ function App() {
 
         <div className="page-content">
           {page === "dashboard" && <DashboardPage income={income} expenses={expenses} balance={balance} savingsRate={savingsRate} categoryTotals={categoryTotals} transactions={transactions} budgets={budgets} onNavigate={navigate} userName={displayName} />}
-          {page === "transactions" && <TransactionsPage transactions={transactions} onCSV={handleCSV} importState={importState} importStats={importStats} />}
+          {page === "transactions" && <TransactionsPage transactions={transactions} onPDF={handlePDF} importState={importState} importStats={importStats} />}
           {page === "subscriptions" && <SubscriptionsPage />}
           {page === "budgets" && <BudgetsPage budgets={budgets} setBudgets={setBudgets} budgetCommitted={budgetCommitted} budgetLimit={budgetLimit} notify={notify} />}
           {page === "goals" && <GoalsPage goals={goals} setGoals={setGoals} balance={balance} notify={notify} />}
@@ -368,12 +397,12 @@ function CompactTransaction({ transaction }: { transaction: Transaction }) {
   return <div className="compact-transaction"><div className={`merchant-icon merchant-${transaction.category.toLowerCase()}`}>{transaction.category === "Food" ? <Utensils size={15} /> : transaction.category === "Shopping" ? <ShoppingBag size={15} /> : transaction.category === "Housing" ? <Home size={15} /> : transaction.type === "income" ? <BriefcaseBusiness size={15} /> : <Receipt size={15} />}</div><div className="transaction-name"><strong>{transaction.description}</strong><span>{transaction.category} · {formatDate(transaction.date)}</span></div><strong className={transaction.type === "income" ? "income-text" : "expense-text"}>{transaction.type === "income" ? "+" : "−"}{money(transaction.amount)}</strong></div>;
 }
 
-function TransactionsPage({ transactions, onCSV, importState, importStats }: { transactions: Transaction[]; onCSV: (event: ChangeEvent<HTMLInputElement>) => void; importState: "idle" | "processing" | "complete"; importStats: { processed: number; categories: number; recurring: number; anomalies: number } }) {
+function TransactionsPage({ transactions, onPDF, importState, importStats }: { transactions: Transaction[]; onPDF: (event: ChangeEvent<HTMLInputElement>) => void; importState: "idle" | "processing" | "complete"; importStats: { processed: number; categories: number; recurring: number; anomalies: number } }) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All categories");
   const [type, setType] = useState("All types");
   const filtered = transactions.filter((item) => `${item.description} ${item.category}`.toLowerCase().includes(search.toLowerCase()) && (category === "All categories" || item.category === category) && (type === "All types" || item.type === type));
-  return <div className="page-stack page-enter"><PageIntro eyebrow="DATA / TRANSACTION LEDGER" title="Your money, itemized." description="Search, filter, and import the raw activity behind every insight." actions={<label className="mechanical-button primary-button upload-button"><UploadCloud size={16} /> IMPORT CSV<input type="file" accept=".csv,text/csv" onChange={onCSV} /></label>} />{importState !== "idle" && <ImportStatus state={importState} stats={importStats} />}{importState === "idle" && <div className="import-strip"><div className="import-icon"><FileText size={22} /></div><div><strong>Import financial data</strong><span>Upload a CSV statement and let FinPilot organize it automatically.</span></div><div className="import-format"><span className="led led-green" /> CSV READY</div><label className="mechanical-button secondary-button upload-button">CHOOSE FILE<input type="file" accept=".csv,text/csv" onChange={onCSV} /></label></div>}<section className="panel ledger-panel"><div className="ledger-toolbar"><div className="input-shell search-shell"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search merchant or description..." /></div><div className="filter-group"><SlidersHorizontal size={15} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.concat(["Income"]).map((item) => <option key={item}>{item}</option>)}</select><select value={type} onChange={(event) => setType(event.target.value)}><option>All types</option><option value="income">Income</option><option value="expense">Expense</option></select></div><span className="record-count">{filtered.length} RECORDS</span></div><div className="table-wrap"><table><thead><tr><th>DATE</th><th>DESCRIPTION</th><th>CATEGORY</th><th>AMOUNT</th><th>TYPE</th><th>STATUS</th><th /></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td className="mono muted-cell">{formatDate(item.date)}</td><td><div className="table-merchant"><span className="merchant-icon small"><Receipt size={14} /></span><div><strong>{item.description}</strong><span className="mono muted-cell">{item.id}</span></div></div></td><td><span className="category-pill"><i style={{ background: categoryColors[item.category] || "#99a1b3" }} />{item.category}</span></td><td className={`mono amount-cell ${item.type === "income" ? "income-text" : ""}`}>{item.type === "income" ? "+" : "−"}{money(item.amount)}</td><td><span className={`type-label ${item.type}`}>{item.type === "income" ? "Income" : "Expense"}</span></td><td><span className="status-label"><CheckCircle2 size={13} /> {item.status}</span></td><td><button className="icon-button tiny" aria-label={`More options for ${item.description}`}><MoreHorizontal size={16} /></button></td></tr>)}</tbody></table>{filtered.length === 0 && <EmptyState icon={<PackageOpen size={24} />} title="No transactions match" copy="Try changing your filters or import a statement to begin." />}</div></section></div>;
+  return <div className="page-stack page-enter"><PageIntro eyebrow="DATA / TRANSACTION LEDGER" title="Your money, itemized." description="Search, filter, and import the raw activity behind every insight." actions={<label className="mechanical-button primary-button upload-button"><UploadCloud size={16} /> IMPORT PDF<input type="file" accept=".pdf,application/pdf" onChange={onPDF} /></label>} />{importState !== "idle" && <ImportStatus state={importState} stats={importStats} />}{importState === "idle" && <div className="import-strip"><div className="import-icon"><FileText size={22} /></div><div><strong>Import financial data</strong><span>Upload a text-based PDF statement and let FinPilot extract transactions automatically.</span></div><div className="import-format"><span className="led led-green" /> PDF READY</div><label className="mechanical-button secondary-button upload-button">CHOOSE PDF<input type="file" accept=".pdf,application/pdf" onChange={onPDF} /></label></div>}<section className="panel ledger-panel"><div className="ledger-toolbar"><div className="input-shell search-shell"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search merchant or description..." /></div><div className="filter-group"><SlidersHorizontal size={15} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All categories</option>{categories.concat(["Income"]).map((item) => <option key={item}>{item}</option>)}</select><select value={type} onChange={(event) => setType(event.target.value)}><option>All types</option><option value="income">Income</option><option value="expense">Expense</option></select></div><span className="record-count">{filtered.length} RECORDS</span></div><div className="table-wrap"><table><thead><tr><th>DATE</th><th>DESCRIPTION</th><th>CATEGORY</th><th>AMOUNT</th><th>TYPE</th><th>STATUS</th><th /></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td className="mono muted-cell">{formatDate(item.date)}</td><td><div className="table-merchant"><span className="merchant-icon small"><Receipt size={14} /></span><div><strong>{item.description}</strong><span className="mono muted-cell">{item.id}</span></div></div></td><td><span className="category-pill"><i style={{ background: categoryColors[item.category] || "#99a1b3" }} />{item.category}</span></td><td className={`mono amount-cell ${item.type === "income" ? "income-text" : ""}`}>{item.type === "income" ? "+" : "−"}{money(item.amount)}</td><td><span className={`type-label ${item.type}`}>{item.type === "income" ? "Income" : "Expense"}</span></td><td><span className="status-label"><CheckCircle2 size={13} /> {item.status}</span></td><td><button className="icon-button tiny" aria-label={`More options for ${item.description}`}><MoreHorizontal size={16} /></button></td></tr>)}</tbody></table>{filtered.length === 0 && <EmptyState icon={<PackageOpen size={24} />} title="No transactions match" copy="Try changing your filters or import a statement to begin." />}</div></section></div>;
 }
 function ImportStatus({ state, stats }: { state: "processing" | "complete"; stats: { processed: number; categories: number; recurring: number; anomalies: number } }) {
   const steps = ["SCANNING TRANSACTIONS", "CLASSIFYING EXPENSES", "DETECTING RECURRING PAYMENTS", "UPDATING FINANCIAL PROFILE"];
@@ -426,7 +455,7 @@ function AssistantPage({ messages, onAsk }: { messages: AssistantMessage[]; onAs
 function SettingsPage({ notify, user, isAuthenticated, onLogin, onLogout }: { notify: (message: string) => void; user: { name: string | null; email: string | null; openId: string } | null; isAuthenticated: boolean; onLogin: () => void; onLogout: () => void }) {
   const [notifications, setNotifications] = useState(true);
   const displayName = user?.name || "FinPilot user";
-  return <div className="page-stack page-enter"><PageIntro eyebrow="SYSTEM / PROFILE CONFIGURATION" title="Tune your control console." description="Manage how FinPilot presents your private financial signal." actions={<span className="settings-id">{isAuthenticated ? "MANUS OAUTH / ACTIVE" : "AUTHENTICATION REQUIRED"}</span>} /><div className="settings-grid"><section className="panel settings-profile"><div className="large-avatar">{initials(displayName)}</div><div><div className="micro-label">PRIMARY PROFILE</div><h2>{displayName}</h2><p>{isAuthenticated ? user?.email || "Authenticated Manus account" : "Sign in with Manus to access your private workspace"}</p></div>{isAuthenticated ? <button className="mechanical-button secondary-button" onClick={onLogout}><LogOutIcon /> SIGN OUT</button> : <button className="mechanical-button primary-button" onClick={onLogin}><ShieldCheck size={15} /> SIGN IN WITH MANUS</button>}</section><section className="panel settings-section"><PanelHeading eyebrow="PREFERENCES" title="Display and alerts" action={<Settings2 size={18} />} /><SettingToggle label="Pattern notifications" description="Show a signal when spending differs from your typical rhythm." checked={notifications} onChange={() => setNotifications(!notifications)} /><SettingToggle label="Compact ledger view" description="Use denser rows in the transaction table." checked={false} onChange={() => notify("Compact view preference noted")} /></section><section className="panel settings-section"><PanelHeading eyebrow="DATA & SAFETY" title="Workspace connection" action={<ShieldCheck size={18} />} /><div className="settings-row"><div><strong>Identity connection</strong><span>{isAuthenticated ? `Manus OAuth session · ${user?.openId.slice(0, 10)}…` : "No Manus session connected"}</span></div><span className={isAuthenticated ? "complete-chip" : "settings-id"}>{isAuthenticated ? <><CheckCircle2 size={14} /> CONNECTED</> : "REQUIRED"}</span></div><div className="settings-row"><div><strong>Transaction source</strong><span>No financial data connected yet. Import a CSV or connect a supported provider.</span></div><span className="mono">NOT CONNECTED</span></div><div className="settings-row"><div><strong>Currency</strong><span>Indian Rupee (₹) · en-IN formatting</span></div><span className="mono">INR</span></div></section></div></div>;
+  return <div className="page-stack page-enter"><PageIntro eyebrow="SYSTEM / PROFILE CONFIGURATION" title="Tune your control console." description="Manage how FinPilot presents your private financial signal." actions={<span className="settings-id">{isAuthenticated ? "MANUS OAUTH / ACTIVE" : "AUTHENTICATION REQUIRED"}</span>} /><div className="settings-grid"><section className="panel settings-profile"><div className="large-avatar">{initials(displayName)}</div><div><div className="micro-label">PRIMARY PROFILE</div><h2>{displayName}</h2><p>{isAuthenticated ? user?.email || "Authenticated Manus account" : "Sign in with Manus to access your private workspace"}</p></div>{isAuthenticated ? <button className="mechanical-button secondary-button" onClick={onLogout}><LogOutIcon /> SIGN OUT</button> : <button className="mechanical-button primary-button" onClick={onLogin}><ShieldCheck size={15} /> SIGN IN WITH MANUS</button>}</section><section className="panel settings-section"><PanelHeading eyebrow="PREFERENCES" title="Display and alerts" action={<Settings2 size={18} />} /><SettingToggle label="Pattern notifications" description="Show a signal when spending differs from your typical rhythm." checked={notifications} onChange={() => setNotifications(!notifications)} /><SettingToggle label="Compact ledger view" description="Use denser rows in the transaction table." checked={false} onChange={() => notify("Compact view preference noted")} /></section><section className="panel settings-section"><PanelHeading eyebrow="DATA & SAFETY" title="Workspace connection" action={<ShieldCheck size={18} />} /><div className="settings-row"><div><strong>Identity connection</strong><span>{isAuthenticated ? `Manus OAuth session · ${user?.openId.slice(0, 10)}…` : "No Manus session connected"}</span></div><span className={isAuthenticated ? "complete-chip" : "settings-id"}>{isAuthenticated ? <><CheckCircle2 size={14} /> CONNECTED</> : "REQUIRED"}</span></div><div className="settings-row"><div><strong>Transaction source</strong><span>No financial data connected yet. Import a PDF statement or connect a supported provider.</span></div><span className="mono">NOT CONNECTED</span></div><div className="settings-row"><div><strong>Currency</strong><span>Indian Rupee (₹) · en-IN formatting</span></div><span className="mono">INR</span></div></section></div></div>;
 }
 function LogOutIcon() { return <ArrowLeftRight size={15} />; }
 function SettingToggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: () => void }) {
